@@ -1,0 +1,89 @@
+################## required packages################################
+print("Loading Libraries")
+#packages <- c("RJDBC","plm","sqldf","MatchIt","dplyr","stringr","tidyr","reshape2","lmtest","sandwich","AER","systemfit")
+#install.packages(packages)
+require(RJDBC)
+library(plm)
+library(sqldf)
+library(MatchIt)
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(reshape2)
+library(lmtest)
+library(sandwich)
+library(AER)
+library(systemfit)
+
+################ Get Data ####################################
+print("Establishing Connections")
+CLASSPATH <- "C:\\Users\\aai8260\\Desktop\\JAVA\\ojdbc6.jar"
+driver <- JDBC("oracle.jdbc.driver.OracleDriver",classPath= CLASSPATH," ")
+UID = "AAI8260"
+
+#APPEX
+URL = "jdbc:oracle:thin:@a05129.sys.ds.wolseley.com:1550:APXPRD00"
+PASS = "J321C#i"
+con <- dbConnect(driver,URL,UID,PASS)
+
+#DWFEI
+URL2 = "jdbc:oracle:thin:@nnldwp01.sys.ds.wolseley.com:1521:DWFEI"
+PASS2 = "PA55W0RD"
+con2 <- dbConnect(driver,URL2,UID,PASS2)
+
+#################read in SQL###############################
+print("Getting DiD Data")
+
+path <- 'S:\\eCommerce\\E-Commerce\\Analysis & Reporting\\Omni-Channel\\eBiz effect on FEI sls\\effect on Sls by BG\\eBiz_effect_byBSG.sql'
+SQL <- readChar(path, file.info(path)$size)
+mydata <- dbGetQuery(con,SQL)
+
+###################### change necessary fields to factors ##########################
+print("Converting Chars to Factors")
+for(i in 1:length(mydata)){
+  if(length(levels(factor(mydata[,i]))) < 5){mydata[,i] <- factor(mydata[,i])}
+  if(class(mydata[,i]) == 'character'){mydata[,i] <- factor(mydata[,i])}
+}
+
+###################### ANALYZE DATA ##########################
+mydata2 <- sqldf('select ZKEY from mydata where TREND = 1 and EBIZ_CURRENT_CUST = 1')
+mydata <- sqldf(' select a.* from mydata a left join mydata2 b on a.ZKEY = b.ZKEY WHERE b.ZKEY is null')
+
+bsgs <- unique(mydata$DOM_TYPE_II)
+mydata_MECH <- subset(mydata,DOM_TYPE_II=='MECHANICAL')
+mydata_RESPLUMBER <- subset(mydata,DOM_TYPE_II=='RES_PLUMBER')
+mydata_HFM <- subset(mydata,DOM_TYPE_II=='HFM')
+mydata_HVAC <- subset(mydata,DOM_TYPE_II=='HVAC')
+mydata_WW <- subset(mydata,DOM_TYPE_II=='WATERWORKS')
+mydata_INDUSTFF <- subset(mydata,DOM_TYPE_II %in% c('INDUSTRIAL','FFFAB'))
+mydata_BUILDER <- subset(mydata,DOM_TYPE_II == 'BUILDER')
+mydata_OTHER <- subset(mydata,DOM_TYPE_II %in% c('SPECIALTY','RETAIL_WHOLESALE','SHOWROOM'))
+rm(mydata)
+
+f1 <- log(CUST_SLS_TM) ~ EBIZ_CURRENT_CUST + log(BRANCH_SLS_TM) + TREND + YEARMONTH
+plm_MECH <- plm(f1,data = mydata_MECH, index = c("ZKEY","YEARMONTH"), model="within")
+plm_RESPLUMBER <- plm(f1,data = mydata_RESPLUMBER, index = c("ZKEY","YEARMONTH"), model="within")
+plm_HFM <- plm(f1,data = mydata_HFM, index = c("ZKEY","YEARMONTH"), model="within")
+plm_HVAC <- plm(f1,data = mydata_HVAC, index = c("ZKEY","YEARMONTH"), model="within")
+plm_WW <- plm(f1,data = mydata_WW, index = c("ZKEY","YEARMONTH"), model="within")
+plm_INDUSTFF <- plm(f1,data = mydata_INDUSTFF, index = c("ZKEY","YEARMONTH"), model="within")
+plm_BUILDER <- plm(f1,data = mydata_BUILDER, index = c("ZKEY","YEARMONTH"), model="within")
+plm_OTHER <- plm(f1,data = mydata_OTHER, index = c("ZKEY","YEARMONTH"), model="within")
+
+
+###################### CORRECT STANDARD ERRORS ##########################
+coefSTDerr <- function(dataframe,model){
+  G <- length(unique(dataframe$ACCOUNT_NAME))
+  N <- length(dataframe$ACCOUNT_NAME)
+  dfa <- (G/(G - 1)) * (N - 1)/ model$df.residual
+  c_vcov <- dfa*vcovHC(model, type = "HC0", cluster = "group", adjust = T)
+  return(coeftest(model, vcov = c_vcov))
+}
+coefSTDerr(mydata_MECH,plm_MECH)
+coefSTDerr(mydata_RESPLUMBER,plm_RESPLUMBER)
+coefSTDerr(mydata_HFM,plm_HFM)
+coefSTDerr(mydata_HVAC,plm_HVAC)
+coefSTDerr(mydata_WW,plm_WW)
+coefSTDerr(mydata_INDUSTFF,plm_INDUSTFF)
+coefSTDerr(mydata_BUILDER,plm_BUILDER)
+coefSTDerr(mydata_OTHER,plm_OTHER)
